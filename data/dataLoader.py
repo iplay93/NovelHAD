@@ -196,6 +196,78 @@ def reconstrct_list(length_list, normalized_df):
         data_list.append(torch.tensor(reconst_list))
     return data_list
 
+def data_augmentation(dataset_list):
+    # Data Augmentation Module
+    print('Augmentation-------------------')
+
+    my_aug = (    
+        #AddNoise(scale=0.01)
+        #Convolve(window="flattop", size=11)
+        #Crop(size=1)
+        # or Crop(size=1)
+        #Drift(max_drift=0.7, n_drift_points=5)
+        #Dropout( p=0.1,fill=0)
+        Pool(size=2) 
+        #Quantize(n_levels=20)
+        #Resize(size=200)
+        #Reverse()
+        #TimeWarp(n_speed_change=5, max_speed_ratio=3)
+    )
+    
+ #    for i in range(dataset_len):            
+ #       aug = my_aug.augment(dataset_list[i].data)  
+ #       ts_ds = TSDataSet(aug, dataset_list[i].label, dataset_list[i].length)
+ #       dataset_list.append(ts_ds)
+    
+    # For give the same number of data size
+    types_label_list, count_label_list = count_label(dataset_list)
+    max_label_count = max(count_label_list)
+
+    sub_count_label = [0] * len(types_label_list)
+    for i in range(len(types_label_list)):
+        sub_count_label[i] = max_label_count - count_label_list[i]
+
+    print("The amount of augmented data:", sub_count_label)
+
+    copy_count_label = sub_count_label.copy()
+
+    dataset_len = len(dataset_list)
+
+    count_label_list[types_label_list.index(dataset_list[i].label)] 
+# temporal aspect data augmentation
+    # for i in range(dataset_len): 
+    #     for j in range(math.ceil(sub_count_label[types_label_list.index(dataset_list[i].label)]/count_label_list[types_label_list.index(dataset_list[i].label)])): 
+    #        #print(dataset_list[i].label, "" , math.ceil(sub_count_label[types_label_list.index(dataset_list[i].label)]/count_label_list[types_label_list.index(dataset_list[i].label)]))
+    #         if copy_count_label[types_label_list.index(dataset_list[i].label)] > 0:
+    #           # print(copy_count_label[types_label_list.index(dataset_list[i].label)],"and",sub_count_label[types_label_list.index(dataset_list[i].label)])          
+    #            aug = my_aug.augment(dataset_list[i].data.T)   
+    #            ts_ds = TSDataSet(aug.T, dataset_list[i].label, len(aug.T))
+    #            dataset_list.append(ts_ds)
+    #            copy_count_label[types_label_list.index(dataset_list[i].label)] = copy_count_label[types_label_list.index(dataset_list[i].label)]-1   
+    
+    # for i in range(len(dataset_list)): 
+    #     aug = my_aug.augment(dataset_list[i].data.T)   
+    #     ts_ds = TSDataSet(aug.T, dataset_list[i].label, len(aug.T))
+    #     dataset_list.append(ts_ds)
+
+# sensor aspect data augmentation
+    for i in range(dataset_len): 
+        for j in range(math.ceil(sub_count_label[types_label_list.index(dataset_list[i].label)]/count_label_list[types_label_list.index(dataset_list[i].label)])): 
+            if copy_count_label[types_label_list.index(dataset_list[i].label)] > 0:          
+                aug = my_aug.augment(dataset_list[i].data)   
+                ts_ds = TSDataSet(aug, dataset_list[i].label, len(aug))
+                dataset_list.append(ts_ds)
+                copy_count_label[types_label_list.index(dataset_list[i].label)] = copy_count_label[types_label_list.index(dataset_list[i].label)]-1   
+
+    for i in range(len(dataset_list)): 
+        aug = my_aug.augment(dataset_list[i].data)   
+        ts_ds = TSDataSet(aug, dataset_list[i].label, len(aug))
+        dataset_list.append(ts_ds)
+    
+    return dataset_list
+
+
+    
 # split data into train/validate/test 
 def loading_data(dataset, padding, timespan, min_seq, min_samples): 
 
@@ -216,73 +288,20 @@ def loading_data(dataset, padding, timespan, min_seq, min_samples):
         dataset_list = opportunityLoader('data/Opportunity/*.dat', timespan, min_seq)
         #visualization_data(dataset_list, 'KDD2022/data/Opportunity/', 5)
     
-    # Data Augmentation Module
-    print('Augmentation-------------------')
-
-    my_aug = (    
-        #AddNoise(scale=0.01)
-        #Convolve(window="flattop", size=11)
-        #Crop(size=1)
-        #Drift(max_drift=0.7, n_drift_points=5)
-        #Dropout( p=0.1,fill=0)
-        #Pool(size=2) 
-        #Quantize(n_levels=20)
-        #Resize(size=200)
-        #Reverse()
-        TimeWarp(n_speed_change=5, max_speed_ratio=3)
-    )
-
-    
-
- #    for i in range(dataset_len):            
- #       aug = my_aug.augment(dataset_list[i].data)  
- #       ts_ds = TSDataSet(aug, dataset_list[i].label, dataset_list[i].length)
- #       dataset_list.append(ts_ds)
-    
-    # For give the same number of data size
+    # change labels
     types_label_list, count_label_list = count_label(dataset_list)
-    max_label_count = max(count_label_list)
 
-    sub_count_label = [0] * len(types_label_list)
-    for i in range(len(types_label_list)):
-        sub_count_label[i] = max_label_count - count_label_list[i]
+    types_label_list.sort()
+    changed_label_list =[i for i in range(1, len(types_label_list)+1)]
 
-    print(sub_count_label)
-
-    copy_count_label = sub_count_label.copy()
-
-    dataset_len = len(dataset_list)
-
-# temporal aspect data augmentation
-#    for i in range(dataset_len): 
-#        for j in range(math.ceil(sub_count_label[dataset_list[i].label-1]/count_label_list[dataset_list[i].label-1])): 
-#            if copy_count_label[dataset_list[i].label-1] > 0:          
-#                aug = my_aug.augment(dataset_list[i].data.T)   
-#                ts_ds = TSDataSet(aug.T, dataset_list[i].label, len(aug.T))
-#                dataset_list.append(ts_ds)
-#                copy_count_label[dataset_list[i].label-1] = copy_count_label[dataset_list[i].label-1]-1   
-    
-#    for i in range(len(dataset_list)): 
-#        aug = my_aug.augment(dataset_list[i].data.T)   
-#        ts_ds = TSDataSet(aug.T, dataset_list[i].label, len(aug.T))
-#        dataset_list.append(ts_ds)
-
-# sensor aspect data augmentation
-    for i in range(dataset_len): 
-        for j in range(math.ceil(sub_count_label[dataset_list[i].label-1]/count_label_list[dataset_list[i].label-1])): 
-            if copy_count_label[dataset_list[i].label-1] > 0:          
-                aug = my_aug.augment(dataset_list[i].data)   
-                ts_ds = TSDataSet(aug, dataset_list[i].label, dataset_list[i].length)
-                dataset_list.append(ts_ds)
-                copy_count_label[dataset_list[i].label-1] = copy_count_label[dataset_list[i].label-1]-1   
-
+    print("original label:", types_label_list, "\nchanged label:", changed_label_list )
+        
     for i in range(len(dataset_list)): 
-        aug = my_aug.augment(dataset_list[i].data)   
-        ts_ds = TSDataSet(aug, dataset_list[i].label, dataset_list[i].length)
-        dataset_list.append(ts_ds)
+        dataset_list[i].label = changed_label_list[types_label_list.index(dataset_list[i].label)] 
 
-
-            
+    
+    # For data augmentation
+    dataset_list = data_augmentation(dataset_list)
 
 
 
