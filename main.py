@@ -9,10 +9,10 @@ import random
 import os, sys
 import numpy as np
 from model.losses import SimCLR
-from utils.visualization import tsne_visualization
+from utils.visualization import tsne_visualization,roc_visualization
 from data.DataLoader import loading_data, splitting_data, count_label_labellist
 #from model.transformer import TransformerModel
-from model.simple import LSTM, Net
+from model.simple import CNN, DeepConvLSTMModel, LSTMModel, Net, LSTMNet
 from model.resnet_big import ResNetBaseline, ResNetSupCon
 from model.lossfunction import ConTimeLoss, SupConLoss
 from tqdm.notebook import tqdm
@@ -149,7 +149,7 @@ def validate(val_data, val_label, model, criterion):
                       'F1 {val_f1:.3f}'.format(i, len(val_data), batch_time=batch_time,
                        loss=losses, top1=top1, val_f1=val_f1))
 
-    print(' * Acc@1 {top1.avg:.3f}'.format(top1=top1))
+    print('*Acc@1 {top1.avg:.3f}'.format(top1=top1))
     return model, losses.avg, top1.avg
 
 def multiclass_roc_auc_score(y_test, y_pred, average="macro"):
@@ -190,6 +190,7 @@ def test(test_data, test_label, model, criterion, num_class):
         softmax = torch.nn.Softmax(dim=1)
         output = softmax(output)
         print('test_auc : {:.3f}\n'.format(roc_auc_score(test_label.cpu(), output.cpu().detach().numpy(), multi_class='ovr')))
+        roc_visualization(test_label.cpu(), output.cpu().detach().numpy())
 
     # calculate and print avg test loss
     test_loss = test_loss/len(test_data)
@@ -214,7 +215,16 @@ def set_model(num_classes,feature_dim, dim, model_type, loss, temp= 0):
         model = ViT(num_classes=num_classes, feature_dim= feature_dim, dim=dim).to(device)
     elif(model_type =='ResNet'):
         model = ResNetBaseline(in_channels=feature_dim, num_pred_classes=num_classes).to(device)
-    
+    elif(model_type =='biLSTM'): 
+        #model = LSTMModel(input_dim=feature_dim, hidden_dim=dim, layer_dim =2, output_dim=num_classes).to(device)
+        model = LSTMNet(vocab_size = 300,embedding_dim = feature_dim, hidden_dim = dim,output_dim = num_classes,n_layers = 2,bidirectional = True,dropout = 0.2).to(device)
+    elif(model_type == "DeepConvLSTM"):
+        model = DeepConvLSTMModel(feature_dim=feature_dim, n_hidden=dim, n_layers=2, n_filters=64, n_classes= num_classes, filter_size=5, drop_prob=0.2)
+    elif(model_type == "CNN"):
+        # Create an instance of the model class and allocate it to the device
+        model = CNN(feature_dim=feature_dim, num_classes= num_classes).to(device)
+
+
     # loss function
     if(loss == 'CE'):
         criterion = nn.CrossEntropyLoss()
