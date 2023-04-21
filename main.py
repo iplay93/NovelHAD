@@ -1,6 +1,6 @@
 import argparse
 from cProfile import label
-from sklearn.compose import TransformedTargetRegressor
+from sklearn.preprocessing import LabelBinarizer
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -27,12 +27,12 @@ from einops.layers.torch import Rearrange, Reduce
 #from sklearn.metrics.cluster import normalized_mutual_info_score as nmi_score
 import torch.backends.cudnn as cudnn
 from utils.utils import AverageMeter, warmup_learning_rate, accuracy, EarlyStopping, save_model
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score
 
 
 
 # Training Function
-def train(train_data, train_label, model, criterion, optimizer, epoch):
+def train(train_data, train_label, model, criterion, optimizer, epoch, batch_size):
     'for one epoch training'
     model.train()
     
@@ -43,20 +43,32 @@ def train(train_data, train_label, model, criterion, optimizer, epoch):
 
     end = time.time()
 
+    iteration_num = (int)(len(train_data)/batch_size)
+    #print(len(train_data), batch_size)
+    #shuffle_list = list(zip(train_data, train_label))
+    #random.shuffle(shuffle_list)
+    #train_data, train_label= zip(*shuffle_list)
+    
+    
     # for each batch
-    for i in range(1):
+    for i in range(iteration_num):
         data_time.update(time.time() - end)
+    
+        data = train_data[i*batch_size:(i+1)*batch_size].to(device)
+        labels = train_label[i*batch_size:(i+1)*batch_size].to(device)
 
-        data = train_data.to(device)
-        labels = train_label.to(device)
         # batch size
         bsz = labels.shape[0]
         # warm-up learning rate
         #warmup_learning_rate(opt, epoch, i, len(train_data), optimizer)
-
-        # compute loss
+        
+        # zero the parameter gradients
+        optimizer.zero_grad()
+        # forward + backward + optimize
         output = model(data)
         loss = criterion(output, labels)
+        loss.backward()
+        optimizer.step()
         
         # update metric
         losses.update(loss.item(), bsz)
@@ -64,28 +76,22 @@ def train(train_data, train_label, model, criterion, optimizer, epoch):
         acc1 = (output.argmax(dim=1) == labels).float().mean()
         top1.update(acc1, bsz)
         #epoch_val_accuracy += acc / len(valid_loader)
-        #    epoch_val_loss += val_loss / len(valid_loader)
-        
+        #    epoch_val_loss += val_loss / len(valid_loader)            
 
-        # SGD
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
         # print info
-        if (i + 1) % 1 == 0:
-            print('Train: [{0}][{1}/{2}]\t'
-                  'BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'DT {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'loss {loss.val:.3f} ({loss.avg:.3f})\t'
-                  'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'F1 {train_f1:.3f}'.format(epoch, i + 1, len(train_data), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1, train_f1=train_f1))
-            sys.stdout.flush()
+        print('Train: [{0}][{1}/{2}]\t'
+            'BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            'DT {data_time.val:.3f} ({data_time.avg:.3f})\t'
+            'loss {loss.val:.3f} ({loss.avg:.3f})\t'
+            'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+            'F1 {train_f1:.3f}'.format(epoch, i + 1, iteration_num, batch_time=batch_time,
+            data_time=data_time, loss=losses, top1=top1, train_f1=train_f1))
+        sys.stdout.flush()
 
     return model, losses.avg, top1.avg
 
@@ -146,6 +152,13 @@ def validate(val_data, val_label, model, criterion):
     print(' * Acc@1 {top1.avg:.3f}'.format(top1=top1))
     return model, losses.avg, top1.avg
 
+def multiclass_roc_auc_score(y_test, y_pred, average="macro"):
+    lb = LabelBinarizer()
+    lb.fit(y_test)
+    y_test = lb.transform(y_test)
+    y_pred = lb.transform(y_pred)
+    return roc_auc_score(y_test, y_pred, average=average)
+
 def test(test_data, test_label, model, criterion, num_class):
     model.eval() 
     # test loss 및 accuracy을 모니터링하기 위해 list 초기화
@@ -172,6 +185,11 @@ def test(test_data, test_label, model, criterion, num_class):
         # 각 object class에 대해 test accuracy 계산
         print('\nacc1 : {:.3f}\n'.format((output.argmax(dim=1) == test_label).float().mean()))
         print('test_f1 : {:.3f}\n'.format(f1_score(test_label.cpu(), output.argmax(dim=1).cpu(), average='macro')))
+        
+        # Define the Softmax function
+        softmax = torch.nn.Softmax(dim=1)
+        output = softmax(output)
+        print('test_auc : {:.3f}\n'.format(roc_auc_score(test_label.cpu(), output.cpu().detach().numpy(), multi_class='ovr')))
 
     # calculate and print avg test loss
     test_loss = test_loss/len(test_data)
@@ -200,8 +218,8 @@ def set_model(num_classes,feature_dim, dim, model_type, loss, temp= 0):
     # loss function
     if(loss == 'CE'):
         criterion = nn.CrossEntropyLoss()
-    elif(loss =='ConDaT'):
-        model = ResNetSupCon()
+    elif(loss =='SupCon'):
+        #model = ResNetSupCon()
         criterion = SupConLoss(temperature= temp)
 
     if torch.cuda.is_available():
@@ -291,7 +309,7 @@ if __name__ == "__main__":
         #adjust_learning_rate(opt, optimizer, epoch)
         # train for one epoch
         time1 = time.time()
-        model, loss, train_acc = train(train_list, train_label_list, model, criterion, optimizer, epoch)
+        model, loss, train_acc = train(train_list, train_label_list, model, criterion, optimizer, epoch, args.batch_size)
          
         time2 = time.time()
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
@@ -322,6 +340,7 @@ if __name__ == "__main__":
     test(test_list, test_label_list, model, criterion, len(num_classes))
     save_model(model, optimizer, args, epoch, 'last.pth')
     
+    # for embedding visualization
     embedding = test(entire_list, entire_label_list, model, criterion, len(num_classes))
     tsne_visualization(embedding.cpu(), entire_label_list.cpu(), args.dataset+'_'+ args.encoder +'_test', 2)
 
