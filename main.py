@@ -12,7 +12,7 @@ from model.losses import SimCLR
 from utils.visualization import tsne_visualization,roc_visualization
 from data.DataLoader import loading_data, splitting_data, count_label_labellist
 #from model.transformer import TransformerModel
-from model.simple import CNN, DeepConvLSTMModel, LSTMModel, Net, LSTMNet
+from model.simple import DeepConvLSTMModel, LSTMModel, Net, LSTMNet
 from model.resnet_big import ResNetBaseline, ResNetSupCon
 from model.lossfunction import ConTimeLoss, SupConLoss
 from tqdm.notebook import tqdm
@@ -163,34 +163,26 @@ def test(test_data, test_label, model, criterion, num_class):
     model.eval() 
     # test loss 및 accuracy을 모니터링하기 위해 list 초기화
     test_loss = 0.0
-    class_correct = list(0. for i in range(10))
-    class_total = list(0. for i in range(10))
-
     model.eval() # prep model for evaluation
 
-    for i in range(1):
-        # forward pass: 입력을 모델로 전달하여 예측된 출력 계산
-        output = model(test_data)
-        # calculate the loss
-        loss = criterion(output, test_label)
+    
+    # forward pass: 입력을 모델로 전달하여 예측된 출력 계산
+    output = model(test_data)
+    # calculate the loss
+    loss = criterion(output, test_label)
         
-        #print(output, test_label)
-        # update test loss
-        test_loss += loss.item()*test_data.size(0)
-        # 출력된 확률을 예측된 클래스로 변환
-        _, pred = torch.max(output, 1)
-        #print(pred, test_label)
-        # 예측과 실제 라벨과 비교
-        correct = np.squeeze(pred.eq(test_label.data.view_as(pred)))
-        # 각 object class에 대해 test accuracy 계산
-        print('\nacc1 : {:.3f}\n'.format((output.argmax(dim=1) == test_label).float().mean()))
-        print('test_f1 : {:.3f}\n'.format(f1_score(test_label.cpu(), output.argmax(dim=1).cpu(), average='macro')))
+    #print(output, test_label)
+    # update test loss
+    test_loss += loss.item()*test_data.size(0)
+    # 출력된 확률을 예측된 클래스로 변환
+    _, pred = torch.max(output, 1)
+    #print(pred, test_label)
+    # 예측과 실제 라벨과 비교
+    correct = np.squeeze(pred.eq(test_label.data.view_as(pred)))
+    # 각 object class에 대해 test accuracy 계산
+    print('\nacc1 : {:.3f}\n'.format((output.argmax(dim=1) == test_label).float().mean()))
+    print('test_f1 : {:.3f}\n'.format(f1_score(test_label.cpu(), output.argmax(dim=1).cpu(), average='macro')))
         
-        # Define the Softmax function
-        softmax = torch.nn.Softmax(dim=1)
-        output = softmax(output)
-        print('test_auc : {:.3f}\n'.format(roc_auc_score(test_label.cpu(), output.cpu().detach().numpy(), multi_class='ovr')))
-        roc_visualization(test_label.cpu(), output.cpu().detach().numpy())
 
     # calculate and print avg test loss
     test_loss = test_loss/len(test_data)
@@ -205,7 +197,22 @@ def test(test_data, test_label, model, criterion, num_class):
         cmt[tl, pl] = cmt[tl, pl] + 1
     print(cmt)
 
-    return output 
+    return output, test_label 
+
+def f1_score_except_NA(test_label, output):
+    test_pred = output.argmax(dim=1).clone().detach()
+    test_label_clone = test_label.clone().detach()
+        
+    count = 0
+    while count < len(test_label_clone):
+        if(test_label_clone [count] == (max(test_label_clone))):
+             test_label_clone  = torch.cat([test_label_clone [0:count], test_label_clone [count+1:]])
+             test_pred = torch.cat([test_pred[0:count], test_pred[count+1:]])
+             count = count-1
+        count = count+1   
+
+    print('test_f1_except_NA : {:.3f}\n'.format(f1_score(test_label_clone .cpu(), test_pred.cpu(), average='macro')))
+    return (f1_score(test_label_clone .cpu(), test_pred.cpu(), average='macro'))
 
 # Setting the model 
 def set_model(num_classes,feature_dim, dim, model_type, loss, temp= 0):
@@ -215,14 +222,12 @@ def set_model(num_classes,feature_dim, dim, model_type, loss, temp= 0):
         model = ViT(num_classes=num_classes, feature_dim= feature_dim, dim=dim).to(device)
     elif(model_type =='ResNet'):
         model = ResNetBaseline(in_channels=feature_dim, num_pred_classes=num_classes).to(device)
-    elif(model_type =='biLSTM'): 
+    elif(model_type =='BiLSTM'): 
         #model = LSTMModel(input_dim=feature_dim, hidden_dim=dim, layer_dim =2, output_dim=num_classes).to(device)
         model = LSTMNet(vocab_size = 300,embedding_dim = feature_dim, hidden_dim = dim,output_dim = num_classes,n_layers = 2,bidirectional = True,dropout = 0.2).to(device)
     elif(model_type == "DeepConvLSTM"):
         model = DeepConvLSTMModel(feature_dim=feature_dim, n_hidden=dim, n_layers=2, n_filters=64, n_classes= num_classes, filter_size=5, drop_prob=0.2)
-    elif(model_type == "CNN"):
-        # Create an instance of the model class and allocate it to the device
-        model = CNN(feature_dim=feature_dim, num_classes= num_classes).to(device)
+
 
 
     # loss function
@@ -256,9 +261,15 @@ if __name__ == "__main__":
     # for scehme
     parser.add_argument('--dataset', type=str, default='lapras', help='choose one of them: lapras, casas, aras_a, aras_b, opportunity')
     parser.add_argument('--padding', type=str, default='mean', help='choose one of them : no, max, mean')
-    parser.add_argument('--timespan', type=int, default=1000, help='choose of the number of timespan between data points(1000 = 1sec, 60000 = 1min)')
+    parser.add_argument('--timespan', type=int, default=10000, help='choose of the number of timespan between data points(1000 = 1sec, 60000 = 1min)')
     parser.add_argument('--min_seq', type=int, default=10, help='choose of the minimum number of data points in a example')
     parser.add_argument('--min_samples', type=int, default=20, help='choose of the minimum number of samples in each label')
+    parser.add_argument('--arg_ood', type=int, default=-1, help='choose of label number that wants to delete')
+    parser.add_argument('--version', type=str, default='CL', help='choose of version want to do : ND or CL')
+
+
+    parser.add_argument('--aug_method', type=str, default='AddNoise', help='choose the data augmentation method')
+    parser.add_argument('--aug_wise', type=str, default='Temporal', help='choose the data augmentation wise')
 
     parser.add_argument('--test_ratio', type=float, default=0.1, help='choose the number of test ratio')
     parser.add_argument('--valid_ratio', type=float, default=0.1, help='choose the number of vlaidation ratio')
@@ -268,13 +279,14 @@ if __name__ == "__main__":
     # for training   
     parser.add_argument('--loss', type=str, default='CE', help='choose one of them: crossentropy loss, contrastive loss')
     parser.add_argument('--optimizer', type=str, default='', help='choose one of them: adam')
-    parser.add_argument('--epochs', type=int, default=10000, help='choose the number of epochs')
+    parser.add_argument('--epochs', type=int, default= 20, help='choose the number of epochs')
     parser.add_argument('--patience', type=int, default=20, help='choose the number of patience for early stopping')
     parser.add_argument('--batch_size', type=int, default=64, help='choose the number of batch size')
     parser.add_argument('--lr', type=float, default=3e-5, help='choose the number of learning rate')
     parser.add_argument('--gamma', type=float, default=0.7, help='choose the number of gamma')
     parser.add_argument('--seed', type=int, default=42, help='choose the number of seed')
     parser.add_argument('--temp', type=float, default=0.07, help='temperature for loss function')
+
 
     args = parser.parse_args()
     print('options', args)
@@ -287,14 +299,15 @@ if __name__ == "__main__":
     seed_everything(args.seed)
 
     # Dataset extraction def loading_data(dataset, padding, timespan, min_seq, min_samples): 
-    data_list, label_list, num_classes = loading_data(args.dataset, args.padding, args.timespan, 2, 2)
+    data_list, label_list, num_classes = loading_data(args.dataset, args.padding, args.timespan, args.min_seq, args.min_samples, args.aug_method, args.aug_wise)
 
     # def tsne_visualization(data_list, label_list, dataset, dim):
     tsne_visualization(data_list, label_list, args.dataset, 3)
 
     num_classes, entire_list, train_list, valid_list, test_list, entire_label_list, train_label_list, \
     valid_label_list, test_label_list \
-    = splitting_data(args.dataset, args.test_ratio, args.valid_ratio, args.padding, args.seed, args.timespan, args.min_seq, args.min_samples)
+    = splitting_data(args.dataset, args.test_ratio, args.valid_ratio, args.padding, args.seed, \
+                     args.timespan, args.min_seq, args.min_samples, args.aug_method, args.aug_wise, args.arg_ood, args.version)
     
     print('finishing data processing-------------------------')
     #types_label_list, _ =count_label_labellist(train_list, train_label_list)
@@ -330,7 +343,7 @@ if __name__ == "__main__":
         #print('learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
         # evaluation
-        model, loss, val_acc = validate(valid_list, valid_label_list, model, criterion)
+        #model, loss, val_acc = validate(valid_list, valid_label_list, model, criterion)
         #print('val_loss', loss, epoch)
         #print('val_acc', val_acc, epoch)
 
@@ -347,12 +360,62 @@ if __name__ == "__main__":
         #        opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
         #    save_model(model, optimizer, opt, epoch, save_file)
     model.load_state_dict(torch.load('checkpoint.pt'))
-    test(test_list, test_label_list, model, criterion, len(num_classes))
-    save_model(model, optimizer, args, epoch, 'last.pth')
     
     # for embedding visualization
-    embedding = test(entire_list, entire_label_list, model, criterion, len(num_classes))
+    embedding, test_label = test(entire_list, entire_label_list, model, criterion, len(num_classes))
     tsne_visualization(embedding.cpu(), entire_label_list.cpu(), args.dataset+'_'+ args.encoder +'_test', 2)
+    
+    # for testing
+    output, test_label = test(test_list, test_label_list, model, criterion, len(num_classes))    
+    save_model(model, optimizer, args, epoch, 'last.pth')
+
+    if(args.version == "ND"):
+
+        f1_score_before = f1_score_except_NA(test_label, output)
+
+        print("Novelty detection")
+        train_list = test_list
+        train_label_list = output.argmax(dim=1)
+        
+        for epoch in range(args.epochs):
+            #adjust_learning_rate(opt, optimizer, epoch)
+            # train for one epoch
+            time1 = time.time()
+            model, loss, train_acc = train(train_list, train_label_list, model, criterion, optimizer, epoch, args.batch_size)
+            
+            time2 = time.time()
+            print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
+
+            early_stopping(loss, model)
+
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
+
+        model.load_state_dict(torch.load('checkpoint.pt'))
+
+        output, test_label = test(valid_list, valid_label_list, model, criterion, len(num_classes))
+        f1_score_after = f1_score_except_NA(test_label, output)
+
+        
+        save_model(model, optimizer, args, epoch, 'last.pth')
+
+      
+
+    
+    # Define the softmax function
+    softmax = torch.nn.Softmax(dim=1)
+    output = softmax(output)
+    print('test_auc : {:.3f}\n'.format(roc_auc_score(test_label.cpu(), output.cpu().detach().numpy(), multi_class='ovr')))
+    roc_visualization(test_label.cpu(), output.cpu().detach().numpy())
+
+    
+
+
+    if(args.version == "ND"):
+        print('before retraining : {:.3f}, after retraining : {:.3f} \n'.format(f1_score_before, f1_score_after))
+
+
 
     #simclr_model = train_simclr(in_channels=len(train_list[0][0]), num_pred_classes =len(num_classes), train_data= train_list, val_data= valid_list, hidden_dim=64,lr=5e-4,
     #temperature=0.07, weight_decay=1e-4, max_epochs=500)
